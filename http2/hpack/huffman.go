@@ -5,38 +5,42 @@
 package hpack
 
 import (
-	"bytes"
 	"errors"
 	"io"
 	"sync"
 )
 
 var bufPool = sync.Pool{
-	New: func() interface{} { return new(bytes.Buffer) },
+	New: func() interface{} { return new([]byte) },
 }
 
 // HuffmanDecode decodes the string in v and writes the expanded
 // result to w, returning the number of bytes written to w and the
 // Write call's return value. At most one Write call is made.
 func HuffmanDecode(w io.Writer, v []byte) (int, error) {
-	buf := bufPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer bufPool.Put(buf)
-	if err := huffmanDecode(buf, 0, v); err != nil {
+	ptr := bufPool.Get().(*[]byte)
+	buf := (*ptr)[:0] // don't trust others
+	defer bufPool.Put(ptr)
+
+	data, err := huffmanDecode(buf, 0, v)
+	if err != nil {
 		return 0, err
 	}
-	return w.Write(buf.Bytes())
+	*ptr = data
+	return w.Write(data)
 }
 
 // HuffmanDecodeToString decodes the string in v.
 func HuffmanDecodeToString(v []byte) (string, error) {
-	buf := bufPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer bufPool.Put(buf)
-	if err := huffmanDecode(buf, 0, v); err != nil {
+	ptr := bufPool.Get().(*[]byte)
+	buf := (*ptr)[:0]
+	defer bufPool.Put(ptr)
+	data, err := huffmanDecode(buf, 0, v)
+	if err != nil {
 		return "", err
 	}
-	return buf.String(), nil
+	*ptr = data
+	return string(data), nil
 }
 
 // ErrInvalidHuffman is returned for errors found decoding
@@ -46,7 +50,7 @@ var ErrInvalidHuffman = errors.New("hpack: invalid Huffman-encoded data")
 // huffmanDecode decodes v to buf.
 // If maxLen is greater than 0, attempts to write more to buf than
 // maxLen bytes will return ErrStringLength.
-func huffmanDecode(buf *bytes.Buffer, maxLen int, v []byte) error {
+func huffmanDecode(buf []byte, maxLen int, v []byte) ([]byte, error) {
 	rootHuffmanNode := getRootHuffmanNode()
 	n := rootHuffmanNode
 	// cur is the bit buffer that has not been fed into n.
@@ -61,13 +65,13 @@ func huffmanDecode(buf *bytes.Buffer, maxLen int, v []byte) error {
 			idx := byte(cur >> (cbits - 8))
 			n = n.children[idx]
 			if n == nil {
-				return ErrInvalidHuffman
+				return nil, ErrInvalidHuffman
 			}
 			if n.children == nil {
-				if maxLen != 0 && buf.Len() == maxLen {
-					return ErrStringLength
+				if maxLen != 0 && len(buf) == maxLen {
+					return nil, ErrStringLength
 				}
-				buf.WriteByte(n.sym)
+				buf = append(buf, n.sym)
 				cbits -= n.codeLen
 				n = rootHuffmanNode
 				sbits = cbits
@@ -79,15 +83,15 @@ func huffmanDecode(buf *bytes.Buffer, maxLen int, v []byte) error {
 	for cbits > 0 {
 		n = n.children[byte(cur<<(8-cbits))]
 		if n == nil {
-			return ErrInvalidHuffman
+			return nil, ErrInvalidHuffman
 		}
 		if n.children != nil || n.codeLen > cbits {
 			break
 		}
-		if maxLen != 0 && buf.Len() == maxLen {
-			return ErrStringLength
+		if maxLen != 0 && len(buf) == maxLen {
+			return nil, ErrStringLength
 		}
-		buf.WriteByte(n.sym)
+		buf = append(buf, n.sym)
 		cbits -= n.codeLen
 		n = rootHuffmanNode
 		sbits = cbits
@@ -95,14 +99,14 @@ func huffmanDecode(buf *bytes.Buffer, maxLen int, v []byte) error {
 	if sbits > 7 {
 		// Either there was an incomplete symbol, or overlong padding.
 		// Both are decoding errors per RFC 7541 section 5.2.
-		return ErrInvalidHuffman
+		return nil, ErrInvalidHuffman
 	}
 	if mask := uint(1<<cbits - 1); cur&mask != mask {
 		// Trailing bits must be a prefix of EOS per RFC 7541 section 5.2.
-		return ErrInvalidHuffman
+		return nil, ErrInvalidHuffman
 	}
 
-	return nil
+	return buf, nil
 }
 
 // incomparable is a zero-width, non-comparable type. Adding it to a struct

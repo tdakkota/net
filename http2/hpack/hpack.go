@@ -490,15 +490,16 @@ func (d *Decoder) readString(p []byte, wantStr bool) (s string, remain []byte, e
 	}
 
 	if wantStr {
-		buf := bufPool.Get().(*bytes.Buffer)
-		buf.Reset() // don't trust others
-		defer bufPool.Put(buf)
-		if err := huffmanDecode(buf, d.maxStrLen, p[:strLen]); err != nil {
-			buf.Reset()
+		ptr := bufPool.Get().(*[]byte)
+		buf := (*ptr)[:0] // don't trust others
+		defer bufPool.Put(ptr)
+		output, err := huffmanDecode(buf, d.maxStrLen, p[:strLen])
+		if err != nil {
+			*ptr = buf[:0]
 			return "", nil, err
 		}
-		s = buf.String()
-		buf.Reset() // be nice to GC
+		s = string(output)
+		*ptr = buf[:0] // be nice to GC
 	}
 	return s, p[strLen:], nil
 }

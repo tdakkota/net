@@ -416,7 +416,7 @@ func TestHuffmanDecodeEOS(t *testing.T) {
 func TestHuffmanDecodeMaxLengthOnTrailingByte(t *testing.T) {
 	in := []byte{0x00, 0x01} // {"0", "0", "0"}
 	var buf bytes.Buffer
-	if err := huffmanDecode(&buf, 2, in); err != ErrStringLength {
+	if _, err := huffmanDecode(buf.Bytes(), 2, in); err != ErrStringLength {
 		t.Errorf("error = %v; want ErrStringLength", err)
 	}
 }
@@ -514,20 +514,19 @@ func TestHuffmanMaxStrLen(t *testing.T) {
 	huff := AppendHuffmanString(nil, msg)
 
 	testGood := func(max int) {
-		var out bytes.Buffer
-		if err := huffmanDecode(&out, max, huff); err != nil {
+		out, err := huffmanDecode(nil, max, huff)
+		if err != nil {
 			t.Errorf("For maxLen=%d, unexpected error: %v", max, err)
 		}
-		if out.String() != msg {
-			t.Errorf("For maxLen=%d, out = %q; want %q", max, out.String(), msg)
+		if got := string(out); got != msg {
+			t.Errorf("For maxLen=%d, out = %q; want %q", max, got, msg)
 		}
 	}
 	testGood(0)
 	testGood(len(msg))
 	testGood(len(msg) + 1)
 
-	var out bytes.Buffer
-	if err := huffmanDecode(&out, len(msg)-1, huff); err != ErrStringLength {
+	if _, err := huffmanDecode(nil, len(msg)-1, huff); err != ErrStringLength {
 		t.Errorf("err = %v; want ErrStringLength", err)
 	}
 }
@@ -535,7 +534,6 @@ func TestHuffmanMaxStrLen(t *testing.T) {
 func TestHuffmanRoundtripStress(t *testing.T) {
 	const Len = 50 // of uncompressed string
 	input := make([]byte, Len)
-	var output bytes.Buffer
 	var huff []byte
 
 	n := 5000
@@ -552,13 +550,13 @@ func TestHuffmanRoundtripStress(t *testing.T) {
 		}
 		huff = AppendHuffmanString(huff[:0], string(input))
 		encSize += int64(len(huff))
-		output.Reset()
-		if err := huffmanDecode(&output, 0, huff); err != nil {
+		output, err := huffmanDecode(nil, 0, huff)
+		if err != nil {
 			t.Errorf("Failed to decode %q -> %q -> error %v", input, huff, err)
 			continue
 		}
-		if !bytes.Equal(output.Bytes(), input) {
-			t.Errorf("Roundtrip failure on %q -> %q -> %q", input, huff, output.Bytes())
+		if !bytes.Equal(output, input) {
+			t.Errorf("Roundtrip failure on %q -> %q -> %q", input, huff, output)
 		}
 	}
 	t.Logf("Compressed size of original: %0.02f%% (%v -> %v)", 100*(float64(encSize)/(Len*float64(n))), Len*n, encSize)
@@ -566,7 +564,10 @@ func TestHuffmanRoundtripStress(t *testing.T) {
 
 func TestHuffmanDecodeFuzz(t *testing.T) {
 	const Len = 50 // of compressed
-	var buf, zbuf bytes.Buffer
+	var (
+		buf  []byte
+		zbuf bytes.Buffer
+	)
 
 	n := 5000
 	if testing.Short() {
@@ -587,8 +588,8 @@ func TestHuffmanDecodeFuzz(t *testing.T) {
 			}
 		}
 
-		buf.Reset()
-		if err := huffmanDecode(&buf, 0, zbuf.Bytes()); err != nil {
+		buf = buf[:0]
+		if _, err := huffmanDecode(buf, 0, zbuf.Bytes()); err != nil {
 			if err == ErrInvalidHuffman {
 				numFail++
 				continue
